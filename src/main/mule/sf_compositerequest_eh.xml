@@ -1,0 +1,145 @@
+<?xml version="1.0" encoding="UTF-8"?>
+
+<mule xmlns:salesforce-composite="http://www.mulesoft.org/schema/mule/salesforce-composite"
+	xmlns:http="http://www.mulesoft.org/schema/mule/http"
+	xmlns:ee="http://www.mulesoft.org/schema/mule/ee/core" xmlns="http://www.mulesoft.org/schema/mule/core"
+	xmlns:doc="http://www.mulesoft.org/schema/mule/documentation"
+	xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:schemaLocation="
+http://www.mulesoft.org/schema/mule/http http://www.mulesoft.org/schema/mule/http/current/mule-http.xsd 
+http://www.mulesoft.org/schema/mule/ee/core http://www.mulesoft.org/schema/mule/ee/core/current/mule-ee.xsd http://www.mulesoft.org/schema/mule/core http://www.mulesoft.org/schema/mule/core/current/mule.xsd
+http://www.mulesoft.org/schema/mule/salesforce-composite http://www.mulesoft.org/schema/mule/salesforce-composite/current/mule-salesforce-composite.xsd">
+	<http:listener-config name="HTTP_Listener_config" doc:name="HTTP Listener config" doc:id="fd2e285b-4544-4a9c-847b-aab823dfcc58" basePath="/api" >
+		<http:listener-connection host="0.0.0.0" port="8082" />
+	</http:listener-config>
+	<salesforce-composite:composite-config name="Salesforce_Composite_Config" doc:name="Salesforce Composite Config" doc:id="38c9b7d8-dbd0-44cc-b5e8-2a2350917887" >
+		<salesforce-composite:oauth-user-pass-connection consumerKey="3MVG9bZIBBVRES4FTmL5FQzl0JgTO9ffbpUEHXpPiuCbtAWGlyB9cuOSwTDTdm3TfzxpXwakV2HZcSGNiYNjh" consumerSecret="AB6756A429E42F7AC5019170F9208E370D67A850743E947B039D6A9BAEFA40A7" username="gayathrimule@conflowence.com" password="Mulesoft123" securityToken="6Gk72JtNU2LrSW1tNVwuriHO" />
+	</salesforce-composite:composite-config>
+	<flow name="salesforce_compositeFlow" doc:id="11434d8c-7673-4612-9ac3-9a2b69ced836" >
+		<http:listener doc:name="/compositeRequest/externalIDandRecordtype" doc:id="a9ccf466-d4af-442e-ade1-10c69c55ac60" config-ref="HTTP_Listener_config" path="/compositeRequest/externalIDandRecordtypefor" />
+		<ee:transform doc:name="set varibales" doc:id="1b7d89d5-d561-4472-b744-47cca5254988" >
+			<ee:message >
+			</ee:message>
+			<ee:variables >
+				<ee:set-variable variableName="failedRecords" ><![CDATA[[]]]></ee:set-variable>
+			
+</ee:variables>
+		</ee:transform>
+		<foreach doc:name="For Each" doc:id="fc28d72f-b030-441f-a502-e9e882393925" collection="#[payload]" batchSize="6">
+			<ee:transform doc:name="set var" doc:id="a9dd785e-916f-4e1d-a480-da12209d7791" >
+				<ee:message >
+				</ee:message>
+				<ee:variables >
+					<ee:set-variable variableName="records" ><![CDATA[%dw 2.0
+output application/json
+---
+payload map  {
+                    "attributes": {
+                        "type": "Account"
+                    },
+                    "Name": $.Name,
+                    "CustomerId__c": $."Customer ID",
+                    "Phone" : $.Phone,
+                    "Email__c" : $."Email",
+                    "RecordTypeId" : "@{recordType.records[0].Id}"
+                }]]></ee:set-variable>
+				</ee:variables>
+			</ee:transform>
+			<ee:transform doc:name="build request" doc:id="f1d76a40-9cb3-4ee6-b7b2-7974f3e58ba3" >
+				<ee:message >
+				</ee:message>
+				<ee:variables >
+					<ee:set-variable variableName="compositerequest" ><![CDATA[%dw 2.0
+output application/json
+---
+{
+	"allOrNone" : false,
+    "compositeRequest": [
+        {
+            "url": "/services/data/v58.0/query?q=SELECT+Id+FROM+RecordType+WHERE+SobjectType='Account'+AND+DeveloperName='Business_Customer'",
+            "method": "GET",
+            "referenceId": "recordType"
+        } ,
+        {
+
+             
+            "method": "PATCH",
+            "url": "/services/data/v58.0/composite/sobjects/Account/CustomerId__c",
+            "referenceId": "upsertresult"  ,   
+            "body": {
+                "records": vars.records
+                
+            }
+        
+           }
+
+    ] 
+}
+]]></ee:set-variable>
+				</ee:variables>
+			</ee:transform>
+			<try doc:name="Try" doc:id="856a9963-54c2-459b-954c-33b8159ed489" >
+				<salesforce-composite:execute-composite-request doc:name="Execute composite request" doc:id="fba94501-8dbd-4d44-8e09-e51b003b87fa" config-ref="Salesforce_Composite_Config">
+				<salesforce-composite:request-body><![CDATA[#[output application/json
+---
+vars.compositerequest]]]></salesforce-composite:request-body>
+			</salesforce-composite:execute-composite-request>
+				<error-handler >
+					<on-error-continue enableNotifications="true" logException="true" doc:name="On Error Continue" doc:id="9aa980b3-83e8-428f-bf81-50354a4eb854" type="ANY">
+						<logger level="INFO" doc:name="LOG-DEBUG verify to check request passes here" doc:id="381a6ca5-3f19-4741-8f32-68285e70319f" message="LOG-DEBUG verify to check request passes here"/>
+						<ee:transform doc:name="Transform Message" doc:id="2bbd7f7e-bce7-4963-8e16-ed4b7295813a" >
+							<ee:message >
+								<ee:set-payload ><![CDATA[%dw 2.0
+output application/json
+---
+(((payload.compositeResponse[1].body) map (item, index) -> ({
+    "index": index,
+    "success": item.success,
+    "errorMessage" : item.errors.message[0]
+    
+})) filter $.success != true) map ((item1, index1) -> 
+{
+    "index": item1.index,
+    "errorMessage" : item1.errorMessage,
+    "Customer ID" : vars.records[item1.index]."Customer ID"
+}
+)]]></ee:set-payload>
+							</ee:message>
+						</ee:transform>
+					</on-error-continue>
+				</error-handler>
+			</try>
+			<ee:transform doc:name="store responses" doc:id="b64a4633-1d51-4718-a526-8f52baa1293c">
+				<ee:message>
+				</ee:message>
+				<ee:variables>
+					<ee:set-variable variableName="failedRecords" ><![CDATA[%dw 2.0
+output application/json
+---
+vars.failedRecords + ((((payload.compositeResponse[1].body) map (item, index) -> ({
+    "index": index,
+    "success": item.success,
+    "errorMessage" : item.errors.message[0]
+    
+})) filter $.success != true) map ((item1, index1) -> 
+{
+    "index": item1.index,
+    "errorMessage" : item1.errorMessage,
+    "Customer ID" : vars.records[item1.index]."CustomerId__c"
+}
+))]]></ee:set-variable>
+				
+</ee:variables>
+			</ee:transform>
+			<logger level="INFO" doc:name="LOG-DEBUG" doc:id="7656dc4f-239b-46e9-8e35-0555dba0e590" message="LOG-DEBUG #[payload]" />
+		</foreach>
+		<logger level="INFO" doc:name="Logger" doc:id="6059eb09-f85f-4b73-9221-7b08239c449a" message='SFDC response #[vars.failedRecords]'/>
+				<choice doc:name="Choice" doc:id="a2d1d7cd-8ea5-4022-97d4-9d9bf8c32d19" >
+			<when expression='#[vars.failedRecords == []]'>
+				<logger level="INFO" doc:name="LOG-COMPOSITE REQUEST SUCCESS" doc:id="543e280c-06f2-4b2f-9aae-d9a93e0fda1a" message="LOG-COMPOSITE REQUEST SUCCESS"/>
+			</when>
+			<otherwise>
+				<raise-error doc:name="Raise error REQUEST:RECORDS_FAILED" doc:id="deb9f7cb-eff1-425f-bc7c-ad321a3710ac" type="REQUEST:RECORDS_FAILED" description="One or more records failed to complete the request. Check failedRecords."/>
+			</otherwise>
+		</choice>
+	</flow>
+	</mule>
